@@ -32,13 +32,6 @@ enum Commands {
     },
 }
 
-struct Command {
-    command_collection: String,
-    command_name: String,
-    command_url: String,
-    command_data: String,
-}
-
 fn is_valid_url(url: &str) -> bool {
     match Url::parse(url) {
         Ok(_) => true,
@@ -49,8 +42,6 @@ fn is_valid_url(url: &str) -> bool {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-
-    let mut commands: Vec<Command> = vec![];
 
     match &cli.command {
         Some(Commands::Run {
