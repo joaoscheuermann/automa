@@ -39,6 +39,59 @@ fn is_valid_url(url: &str) -> bool {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)] // this function should follow the callback type
+fn log_callback(
+    scope: &mut v8::HandleScope,
+    args: v8::FunctionCallbackArguments,
+    mut _retval: v8::ReturnValue,
+) {
+    let message = args
+        .get(0)
+        .to_string(scope)
+        .unwrap()
+        .to_rust_string_lossy(scope);
+
+    println!("Logged: {}", message);
+}
+
+fn execute (command: String) -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize V8.
+    let platform = v8::new_default_platform(0, false).make_shared();
+
+    v8::V8::initialize_platform(platform);
+    v8::V8::initialize();
+
+    {
+        let mut isolate = v8::Isolate::new(v8::CreateParams::default());
+        let mut scope = v8::HandleScope::new(&mut isolate);
+
+        // Create a console object
+        let global = v8::ObjectTemplate::new(&mut scope);
+
+        global.set(
+            v8::String::new(&mut scope, "log").unwrap().into(),
+            v8::FunctionTemplate::new(&mut scope, log_callback).into(),
+        );
+
+        let context = v8::Context::new_from_template(&mut scope, global);
+        let mut context_scope = v8::ContextScope::new(&mut scope, context);
+
+        // Create a string containing the JavaScript source code.
+        let code = v8::String::new(&mut context_scope, command.as_str()).unwrap();
+
+        // Compile the source code.
+        let script = v8::Script::compile(&mut context_scope, code, None).unwrap();
+        // Run the script to get the result.
+        let result = script.run(&mut context_scope).unwrap();
+
+        // Convert the result to a string and print it.
+        let result = result.to_string(&mut context_scope).unwrap();
+        println!("{}", result.to_rust_string_lossy(&mut context_scope));
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -66,6 +119,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             file.read_to_string(&mut contents)?;
 
             println!("Running command: {} from collection: {}", command_name, command_collection);
+
+            execute(contents)?;
         }
 
         Some(Commands::Add {
