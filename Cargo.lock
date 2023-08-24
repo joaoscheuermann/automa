@@ -120,8 +120,10 @@ name = "automa"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "either",
  "octocrab",
  "reqwest",
+ "secrecy",
  "tokio",
  "url",
  "zip",

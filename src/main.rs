@@ -10,6 +10,8 @@
 
 // TODO: Refatorar o comando run para rodar arquivos em ts e js
 
+use clap::{Parser, Subcommand};
+use either::Either;
 /**
  * Ex:
  * automa list -> lista todas as collections
@@ -24,8 +26,8 @@
  * <collection>
  *    <command>
  */
-use clap::{Parser, Subcommand};
 use octocrab;
+use reqwest::header::ACCEPT;
 
 use url::Url;
 
@@ -34,10 +36,13 @@ use std::io::prelude::*;
 use std::io::Bytes;
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::time::Duration;
 use zip::ZipArchive;
 
 static DENO_DIR_NAME: &str = "deno";
 static COMMANDS_DIR_NAME: &str = "commands";
+
+static GITHUB_APP_CLIENT_ID: &str = "Iv1.60a4682a0d3c1ca2";
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -64,6 +69,10 @@ enum Commands {
         command_name: String,
         command_url: String,
     },
+
+    /// Authenticates the user with GitHub.
+    /// This is required to be able to access private gists and do a backup of the commands.
+    Auth {},
 }
 
 fn get_root_dir() -> PathBuf {
@@ -100,14 +109,6 @@ fn get_command_dir(root: &PathBuf, command_collection: &str, command_name: &str)
     path.push(command_name);
 
     path
-}
-
-fn check_if_deno_is_installed(deno_dir: &PathBuf, deno_executable_name: &str) -> bool {
-    let mut path = deno_dir.clone();
-
-    path.push(deno_executable_name);
-
-    path.exists()
 }
 
 fn is_valid_url(url: &str) -> bool {
@@ -275,6 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // );
         }
 
+        // octocrab::instance().authenticate_as_device(, scope).await?;
         Some(Commands::Add {
             command_collection,
             command_name,
@@ -314,7 +316,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        None => {}
+        Some(Commands::Auth {}) => {
+            let client_id = secrecy::Secret::from(GITHUB_APP_CLIENT_ID.to_string());
+            let scope = ["gist"];
+
+            let crab = octocrab::Octocrab::builder()
+                .base_uri("https://github.com")?
+                .add_header(ACCEPT, "application/json".to_string())
+                .build()?;
+
+            let codes = crab.authenticate_as_device(&client_id, scope).await?;
+
+            println!(
+                "Go to {} and enter code {}",
+                codes.verification_uri, codes.user_code
+            );
+
+            let mut interval = Duration::from_secs(codes.interval);
+            let mut clock = tokio::time::interval(interval);
+
+            loop {
+                clock.tick().await;
+                match codes.poll_once(&crab, &client_id).await? {
+                    Either::Left(_) => break (),
+                    Either::Right(cont) => {
+                        match cont {
+                            octocrab::auth::Continue::SlowDown => {
+                                // We were request to slow down. We add five seconds to the polling
+                                // duration.
+                                interval += Duration::from_secs(5);
+                                clock = tokio::time::interval(interval);
+                                // The first tick happens instantly, so we tick that off immediately.
+                                clock.tick().await;
+                            }
+                            octocrab::auth::Continue::AuthorizationPending => {
+                                // The user has not clicked authorize yet, but nothing has gone wrong.
+                                // We keep polling.
+                            }
+                        }
+                    }
+                }
+            }
+
+            println!("Authorization succeeded!");
+        }
+
+        None => {
+            println!("Missing command!");
+        }
     }
 
     Ok(())
